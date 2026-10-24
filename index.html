@@ -35,7 +35,7 @@ input,select{width:100%;font-family:inherit;font-size:17px;padding:11px 12px;bor
 .btn.sec{background:var(--fill);color:var(--blue);margin-top:8px}
 .btn.danger{background:var(--fill);color:var(--red)}
 .hint{font-size:13px;color:var(--sub);margin-top:8px}
-.stakes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+.stakes{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-top:6px}
 .stk{border:0;background:var(--fill);color:var(--text);border-radius:12px;padding:10px 4px;font-family:inherit;cursor:pointer;text-align:center}
 .stk small{display:block;color:var(--sub);font-size:12px;font-weight:600}
 .stk b{font-size:18px}
@@ -122,8 +122,17 @@ svg{width:100%;height:auto;display:block}
     <label>Il tuo bankroll (€)</label>
     <input id="sBank" type="number" step="10" min="0" inputmode="decimal">
     <label>1 stake = quanto % del bankroll</label>
-    <input id="sPct" type="number" step="0.1" min="0.1" max="10" inputmode="decimal">
-    <div class="hint">Un solo valore di bankroll, che aggiorni tu quando vuoi.</div>
+    <input id="sPct" type="number" step="0.1" min="0.1" max="100" inputmode="decimal">
+    <label>Stake disponibili (separati da spazio, max 6)</label>
+    <input id="sStakes" type="text" inputmode="decimal" placeholder="0,5 0,75 1">
+    <div class="hint">Esempio: 0,5 0,75 1 oppure 0,25 0,5 1 1,5 2. Il bankroll è un solo valore, che aggiorni tu.</div>
+  </div>
+  <div class="card">
+    <h2>Generale</h2>
+    <label>Tipster predefinito nel form</label>
+    <select id="sDef"></select>
+    <label>Il tuo nome nell'app</label>
+    <input id="sMe" type="text" maxlength="30">
   </div>
   <div class="card">
     <h2>Tipster e abbonamenti</h2>
@@ -145,8 +154,7 @@ svg{width:100%;height:auto;display:block}
 
 <script>
 const KEY='bettracker.v1';
-const ME='Io (manuale)';
-const STAKES=[0.5,0.75,1];
+const DEF_STAKES=[0.5,0.75,1];
 let S=load();
 let ui={tab:'bets',listF:'all',statF:'all'};
 
@@ -160,7 +168,15 @@ function normalize(d){
   d.tipsters=(d.tipsters&&d.tipsters.length?d.tipsters:[{name:'GSC',sub:0}]).map(t=>({name:t.name,sub:t.sub||0}));
   d.subOv=d.subOv||{};
   const s=d.set||{};
-  d.set={bank:s.bank>=0?s.bank:1000,stakePct:s.stakePct>0?s.stakePct:1};
+  const stakes=Array.isArray(s.stakes)?s.stakes.filter(x=>x>0).slice(0,6):[];
+  d.set={
+    bank:s.bank>=0?s.bank:1000,
+    stakePct:s.stakePct>0?s.stakePct:1,
+    stakes:stakes.length?stakes:DEF_STAKES.slice(),
+    defTipster:s.defTipster||'GSC',
+    meName:(s.meName||'Io').trim()||'Io'
+  };
+  d.bets.forEach(b=>{if(b.tipster==='Io (manuale)')b.tipster=d.set.meName});
   return d;
 }
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
@@ -172,16 +188,18 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const ym=d=>d.slice(0,7);
 const mLabel=m=>{const[y,mo]=m.split('-');return['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'][+mo-1]+' '+y.slice(2)};
+const fmtN=n=>String(n).replace('.',',');
 
+const me=()=>S.set.meName;
 function profit(b){
   if(b.result==='win')return b.amount*(b.odds-1);
   if(b.result==='loss')return -b.amount;
   return 0;
 }
 const settled=b=>b.result==='win'||b.result==='loss';
-function names(){return[...S.tipsters.map(t=>t.name),ME]}
+function names(){return[...S.tipsters.map(t=>t.name),me()]}
 function subOf(t,m){
-  if(t===ME)return 0;
+  if(t===me())return 0;
   const k=t+'|'+m;
   if(k in S.subOv)return S.subOv[k];
   const x=S.tipsters.find(z=>z.name===t);return x?x.sub:0;
@@ -203,7 +221,7 @@ function monthly(filter){
     const gross=bs.reduce((a,b)=>a+profit(b),0);
     let sub=0;
     tips.forEach(t=>{
-      if(t===ME)return;
+      if(t===me())return;
       const has=S.bets.some(b=>b.tipster===t&&ym(b.date)===m);
       const k=t+'|'+m;
       if(has||(k in S.subOv&&S.subOv[k]>0))sub+=subOf(t,m);
@@ -217,12 +235,12 @@ function monthly(filter){
 const stakeEur=s=>S.set.bank*S.set.stakePct/100*s;
 function renderStakeBox(){
   const cur=parseFloat($('#fAmount').value);
-  $('#stakeBox').innerHTML=STAKES.map(s=>{
+  $('#stakeBox').innerHTML=S.set.stakes.map(s=>{
     const v=stakeEur(s);
     const on=Math.abs(v-cur)<0.005;
-    return`<button class="stk ${on?'on':''}" data-s="${s}"><small>Stake ${s}</small><b>${eur(v)}</b></button>`;
+    return`<button class="stk ${on?'on':''}" data-s="${s}"><small>Stake ${fmtN(s)}</small><b>${eur(v)}</b></button>`;
   }).join('');
-  $('#stakeHint').textContent=`Bankroll ${eur(S.set.bank)} · 1 stake = ${S.set.stakePct}% (${eur(stakeEur(1))}). Tocca uno stake per usarlo come importo.`;
+  $('#stakeHint').textContent=`Bankroll ${eur(S.set.bank)} · 1 stake = ${fmtN(S.set.stakePct)}% (${eur(stakeEur(1))}). Tocca uno stake per usarlo come importo.`;
 }
 $('#stakeBox').onclick=e=>{
   const b=e.target.closest('[data-s]');if(!b)return;
@@ -232,12 +250,14 @@ $('#stakeBox').onclick=e=>{
 
 /* ---------- Form ---------- */
 function fillTipsterSelects(){
-  const opts=names().map(n=>`<option>${esc(n)}</option>`).join('');
+  const list=names();
   const cur=$('#fTipster').value;
-  $('#fTipster').innerHTML=opts;
-  $('#fTipster').value=cur&&names().includes(cur)?cur:'GSC';
+  $('#fTipster').innerHTML=list.map(n=>`<option>${esc(n)}</option>`).join('');
+  const def=list.includes(S.set.defTipster)?S.set.defTipster:list[0];
+  $('#fTipster').value=cur&&list.includes(cur)?cur:def;
 }
 function chipsFilter(el,key){
+  if(ui[key]!=='all'&&!names().includes(ui[key]))ui[key]='all';
   const items=['all',...names()];
   el.innerHTML=items.map(n=>`<button class="chip ${ui[key]===n?'on':''}" data-f="${esc(n)}">${n==='all'?'Tutti':esc(n)}</button>`).join('');
   el.onclick=e=>{const b=e.target.closest('[data-f]');if(!b)return;ui[key]=b.dataset.f;renderAll()};
@@ -356,23 +376,56 @@ function renderStats(){
 }
 
 /* ---------- Impostazioni ---------- */
+function renameTipster(oldN,newN){
+  S.bets.forEach(b=>{if(b.tipster===oldN)b.tipster=newN});
+  Object.keys(S.subOv).forEach(k=>{
+    if(k.startsWith(oldN+'|')){S.subOv[newN+'|'+k.slice(oldN.length+1)]=S.subOv[k];delete S.subOv[k]}
+  });
+  if(S.set.defTipster===oldN)S.set.defTipster=newN;
+  if(ui.listF===oldN)ui.listF=newN;
+  if(ui.statF===oldN)ui.statF=newN;
+}
+function nameFree(n,except){
+  return n&&!names().some(x=>x.toLowerCase()===n.toLowerCase()&&x!==except);
+}
 function renderSettings(){
   $('#sBank').value=S.set.bank;
   $('#sPct').value=S.set.stakePct;
+  $('#sStakes').value=S.set.stakes.map(fmtN).join(' ');
+  $('#sMe').value=S.set.meName;
+  const list=names();
+  $('#sDef').innerHTML=list.map(n=>`<option>${esc(n)}</option>`).join('');
+  $('#sDef').value=list.includes(S.set.defTipster)?S.set.defTipster:list[0];
   const cm=ym(today());
-  $('#tipList').innerHTML=S.tipsters.map((t,i)=>{
+  $('#tipList').innerHTML=S.tipsters.length?S.tipsters.map((t,i)=>{
     const k=t.name+'|'+cm,ov=k in S.subOv?S.subOv[k]:'';
     return`<div style="padding:10px 0;border-top:${i?'1px solid var(--line)':'0'}">
-      <div style="display:flex;justify-content:space-between;align-items:center"><b>${esc(t.name)}</b>
-      ${t.name==='GSC'?'':`<button class="x" data-rm="${i}">×</button>`}</div>
+      <div style="display:flex;gap:8px;align-items:center"><input type="text" data-name="${i}" value="${esc(t.name)}" maxlength="30" style="font-weight:600">
+      <button class="x" data-rm="${i}">×</button></div>
       <div class="row2"><div><label>Abbonamento mensile (€)</label><input type="number" step="0.01" min="0" data-sub="${i}" value="${t.sub}" inputmode="decimal"></div>
-      <div><label>Solo ${mLabel(cm)} (€)</label><input type="number" step="0.01" min="0" data-ov="${esc(k)}" value="${ov}" placeholder="uguale" inputmode="decimal"></div></div></div>`}).join('');
+      <div><label>Solo ${mLabel(cm)} (€)</label><input type="number" step="0.01" min="0" data-ov="${esc(t.name+'|'+cm)}" value="${ov}" placeholder="uguale" inputmode="decimal"></div></div></div>`}).join(''):'<div class="empty">Nessun tipster</div>';
 }
 $('#sBank').onchange=()=>{S.set.bank=Math.max(0,parseFloat($('#sBank').value)||0);save();renderAll()};
-$('#sPct').onchange=()=>{S.set.stakePct=Math.min(10,Math.max(0.1,parseFloat($('#sPct').value)||1));save();renderAll()};
+$('#sPct').onchange=()=>{S.set.stakePct=Math.min(100,Math.max(0.1,parseFloat($('#sPct').value)||1));save();renderAll()};
+$('#sStakes').onchange=()=>{
+  const v=$('#sStakes').value.split(/[\s;]+/).map(x=>parseFloat(x.replace(',','.'))).filter(x=>x>0).slice(0,6);
+  if(v.length)S.set.stakes=v;
+  save();renderAll();
+};
+$('#sDef').onchange=()=>{S.set.defTipster=$('#sDef').value;save();renderAll()};
+$('#sMe').onchange=()=>{
+  const n=$('#sMe').value.trim(),old=me();
+  if(!nameFree(n,old)){alert('Nome vuoto o già usato.');renderAll();return}
+  renameTipster(old,n);S.set.meName=n;save();renderAll();
+};
 $('#tipList').onchange=e=>{
   const t=e.target,v=parseFloat(t.value);
-  if(t.dataset.sub!==undefined)S.tipsters[+t.dataset.sub].sub=Math.max(0,v||0);
+  if(t.dataset.name!==undefined){
+    const i=+t.dataset.name,old=S.tipsters[i].name,n=t.value.trim();
+    if(!nameFree(n,old)){alert('Nome vuoto o già usato.');renderAll();return}
+    renameTipster(old,n);S.tipsters[i].name=n;
+  }
+  else if(t.dataset.sub!==undefined)S.tipsters[+t.dataset.sub].sub=Math.max(0,v||0);
   else if(t.dataset.ov!==undefined){
     if(t.value==='')delete S.subOv[t.dataset.ov];else S.subOv[t.dataset.ov]=Math.max(0,v||0);
   }
@@ -387,7 +440,7 @@ $('#tipList').onclick=e=>{
 };
 $('#addTip').onclick=()=>{
   const n=$('#newTip').value.trim();
-  if(!n||names().some(x=>x.toLowerCase()===n.toLowerCase())){alert('Nome vuoto o già esistente.');return}
+  if(!nameFree(n,null)){alert('Nome vuoto o già esistente.');return}
   S.tipsters.push({name:n,sub:Math.max(0,parseFloat($('#newTipSub').value)||0)});
   $('#newTip').value='';$('#newTipSub').value='';save();renderAll();
 };
